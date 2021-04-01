@@ -138,7 +138,7 @@ func (h *ReleaseHandler) updateGeneratedChart(e keptnv2.EventData) error {
 	canaryWeightTo100Updater := configurationchanger.NewCanaryWeightManipulator(h.mesh, 100)
 	//chartGenerator := helm.NewGeneratedChartGenerator(h.mesh, h.getKeptnHandler().Logger)
 	userChartManifest, err := h.getHelmExecutor().GetManifest(helm.GetReleaseName(e.Project, e.Stage, e.Service, false),
-		e.Project+"-"+e.Stage)
+		e.Service)
 	if err != nil {
 		return err
 	}

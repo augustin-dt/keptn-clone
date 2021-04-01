@@ -72,7 +72,12 @@ func GetReleaseName(project string, stage string, service string, generated bool
 	if generated {
 		suffix = "-generated"
 	}
-	return project + "-" + stage + "-" + service + suffix
+	fullRelease := strings.Split(project + "-" + stage + "-" + service + suffix, "-")
+	var release string
+	for _, i := range fullRelease {
+		release += string(i[0])
+	}
+	return release
 }
 
 // DoesChartExist checks if the GIT repo contains the specified chart

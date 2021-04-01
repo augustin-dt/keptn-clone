@@ -83,7 +83,6 @@ func (h *HelmV3Executor) newConfigFlags(config *rest.Config, namespace string) *
 }
 
 func (h *HelmV3Executor) getKubeRestConfig() (config *rest.Config, err error) {
-
 	if getInClusterConfig() {
 		config, err = rest.InClusterConfig()
 	} else {
@@ -110,7 +109,7 @@ func (h *HelmV3Executor) GetManifest(releaseName, namespace string) (string, err
 
 	release, err := getAction.Run(releaseName)
 	if err != nil {
-		return "", fmt.Errorf("Error when quering the manifest of chart %s in namespace %s: %s",
+		return "", fmt.Errorf("Error when querying the manifest of chart %s in namespace %s: %s",
 			releaseName, namespace, err.Error())
 	}
 	return release.Manifest, nil
@@ -138,22 +137,28 @@ func (h *HelmV3Executor) UpgradeChart(ch *chart.Chart, releaseName, namespace st
 		histClient := action.NewHistory(cfg)
 		var release *release.Release
 
-		if _, err = histClient.Run(releaseName); err == driver.ErrReleaseNotFound {
+		if _, err = histClient.Run(releaseName); err == driver.ErrReleaseNotFound{
 			iCli := action.NewInstall(cfg)
 			iCli.Namespace = namespace
 			iCli.ReleaseName = releaseName
 			iCli.Wait = true
 			iCli.Timeout = time.Minute * 3
+			iCli.Atomic = true
 			release, err = iCli.Run(ch, vals)
 		} else {
 			iCli := action.NewUpgrade(cfg)
+			iCli.Install = true
 			iCli.Namespace = namespace
 			iCli.Wait = true
 			iCli.ResetValues = true
 			iCli.Timeout = time.Minute * 3
+			iCli.Atomic = true
 			release, err = iCli.Run(releaseName, ch, vals)
 		}
 		if err != nil {
+			rb := action.NewRollback(cfg)
+			rb.Wait = true
+			rb.Timeout = time.Minute * 3
 			return fmt.Errorf("Error when installing/upgrading chart %s in namespace %s: %s",
 				releaseName, namespace, err.Error())
 		}

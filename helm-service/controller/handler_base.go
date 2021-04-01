@@ -95,7 +95,7 @@ func getDeploymentName(strategy keptnevents.DeploymentStrategy, generatedChart b
 func (h *HandlerBase) upgradeChart(ch *chart.Chart, event keptnv2.EventData, strategy keptnevents.DeploymentStrategy) error {
 	generated := strings.HasSuffix(ch.Name(), "-generated")
 	releasename := helm.GetReleaseName(event.Project, event.Stage, event.Service, generated)
-	namespace := event.Project + "-" + event.Stage
+	namespace := event.Service
 
 	return h.helmExecutor.UpgradeChart(ch, releasename, namespace,
 		getKeptnValues(event.Project, event.Stage, event.Service, getDeploymentName(strategy, generated)))
@@ -105,7 +105,7 @@ func (h *HandlerBase) upgradeChartWithReplicas(ch *chart.Chart, event keptnv2.Ev
 	strategy keptnevents.DeploymentStrategy, replicas int) error {
 	generated := strings.HasSuffix(ch.Name(), "-generated")
 	releasename := helm.GetReleaseName(event.Project, event.Stage, event.Service, generated)
-	namespace := event.Project + "-" + event.Stage
+	namespace := event.Service
 
 	return h.helmExecutor.UpgradeChart(ch, releasename, namespace,
 		addReplicas(getKeptnValues(event.Project, event.Stage, event.Service,
