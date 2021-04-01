@@ -16,8 +16,8 @@
           <button dt-button (click)="loadProjects()"><dt-icon name="refresh"></dt-icon> Retry</button>
         </ng-container>
         <ng-container *ngSwitchDefault>
-          <dt-empty-state-item-title class="mt-2" aria-level="2">Some error occured</dt-empty-state-item-title>
-          <p>Sorry, some error occured. Check out the <a href="https://keptn.sh/docs/quickstart/" target="_blank" rel="noopener noreferrer">Quick Start</a> instructions on how to <a [href]="'/manage/project/' | keptnUrl" target="_blank">create a project</a> or go back to <a [routerLink]="['/dashboard']">your dashboard</a>.</p>
+          <dt-empty-state-item-title class="mt-2" aria-level="2">Some error occurred</dt-empty-state-item-title>
+          <p>Sorry, some error occurred. Check out the <a href="https://keptn.sh/docs/quickstart/" target="_blank" rel="noopener noreferrer">Quick Start</a> instructions on how to <a [href]="'/manage/project/' | keptnUrl" target="_blank">create a project</a> or go back to <a [routerLink]="['/dashboard']">your dashboard</a>.</p>
           <button dt-button (click)="loadProjects()"><dt-icon name="refresh"></dt-icon> Retry</button>
         </ng-container>
       </ng-container>
@@ -31,18 +31,20 @@
   </div>
 </div>
 <div class="project-board" fxLayout="row" *ngIf="project$ | async as project">
-  <dt-menu aria-label="Default Menu Example" class="dt-default-menu-example">
+  <dt-menu aria-label="Default Menu Example" class="dt-default-menu-example" fxFlex="0 0 150px">
     <dt-menu-group label="">
       <a (click)="selectView('environment', project.projectName)" [class.active]="view === 'environment'" dtMenuItem>Environment</a>
       <a (click)="redirectView('service', project.projectName)" [class.active]="view === 'service'" dtMenuItem>Services</a>
       <a (click)="redirectView('sequence', project.projectName)" [class.active]="view === 'sequence'" dtMenuItem>Sequences</a>
       <a (click)="redirectView('integration', project.projectName)" [class.active]="view === 'integration'" dtMenuItem>Integration</a>
+      <a (click)="redirectView('ff-uniform', project.projectName)" [class.active]="view === 'ff-uniform'" *ngIf="view === 'ff-uniform'" dtMenuItem>Uniform</a>
     </dt-menu-group>
   </dt-menu>
   <ng-container [ngSwitch]="view">
-    <ktb-environment-view *ngSwitchCase="'environment'" fxFlex="100" [project]="project"></ktb-environment-view>
-    <ktb-service-view *ngSwitchCase="'service'" fxFlex="100"></ktb-service-view>
-    <ktb-sequence-view *ngSwitchCase="'sequence'" fxFlex="100"></ktb-sequence-view>
-    <ktb-integration-view *ngSwitchCase="'integration'" fxFlex="100"></ktb-integration-view>
+    <ktb-environment-view *ngSwitchCase="'environment'" fxFlex="calc(100% - 150px)"></ktb-environment-view>
+    <ktb-service-view *ngSwitchCase="'service'" fxFlex="calc(100% - 150px)"></ktb-service-view>
+    <ktb-sequence-view *ngSwitchCase="'sequence'" fxFlex="calc(100% - 150px)"></ktb-sequence-view>
+    <ktb-integration-view *ngSwitchCase="'integration'" fxFlex="calc(100% - 150px)"></ktb-integration-view>
+    <ktb-uniform-view *ngSwitchCase="'ff-uniform'" fxFlex="calc(100% - 150px)"></ktb-uniform-view>
   </ng-container>
 </div>

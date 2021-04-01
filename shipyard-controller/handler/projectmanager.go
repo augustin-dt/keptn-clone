@@ -35,7 +35,7 @@ type ProjectManager struct {
 	SecretStore             common.SecretStore
 	ProjectMaterializedView db.ProjectsDBOperations
 	TaskSequenceRepository  db.TaskSequenceRepo
-	EventRpository          db.EventRepo
+	EventRepository         db.EventRepo
 }
 
 var nilRollback = func() error {
@@ -53,7 +53,7 @@ func NewProjectManager(
 		SecretStore:             secretStore,
 		ProjectMaterializedView: dbProjectsOperations,
 		TaskSequenceRepository:  taskSequenceRepo,
-		EventRpository:          eventRepo,
+		EventRepository:         eventRepo,
 		Logger:                  keptncommon.NewLogger("", "", "shipyard-controller"),
 	}
 	return projectUpdater
@@ -104,7 +104,7 @@ func (pm *ProjectManager) Create(params *operations.CreateProjectParams) (error,
 	})
 
 	if err != nil {
-		pm.Logger.Error(fmt.Sprintf("Error occured while creating project in configuration service: %s", err.Error()))
+		pm.Logger.Error(fmt.Sprintf("Error occurred while creating project in configuration service: %s", err.Error()))
 		return err, func() error {
 			pm.Logger.Info(fmt.Sprintf("Rollback: Try to delete GIT repository credentials secret for project %s", *params.Name))
 			if err := pm.deleteGITRepositorySecret(*params.Name); err != nil {
@@ -134,7 +134,7 @@ func (pm *ProjectManager) Create(params *operations.CreateProjectParams) (error,
 		},
 	}
 	if err := pm.ConfigurationStore.CreateProjectShipyard(*params.Name, projectResource); err != nil {
-		pm.Logger.Error(fmt.Sprintf("Error occured while uploading shipyard resource to configuraiton service: %s", err.Error()))
+		pm.Logger.Error(fmt.Sprintf("Error occurred while uploading shipyard resource to configuration service: %s", err.Error()))
 		return err, func() error {
 			pm.Logger.Info(fmt.Sprintf("Rollback: Try to delete project %s from configuration service", *params.Name))
 			if err := pm.ConfigurationStore.DeleteProject(*params.Name); err != nil {
@@ -166,24 +166,34 @@ func (pm *ProjectManager) Create(params *operations.CreateProjectParams) (error,
 }
 
 func (pm *ProjectManager) Update(params *operations.UpdateProjectParams) (error, common.RollbackFunc) {
+
+	// old secret for rollback
 	oldSecret, err := pm.getGITRepositorySecret(*params.Name)
 	if err != nil {
 		return err, nilRollback
 	}
+
+	// old project for rollback
 	oldProject, err := pm.ProjectMaterializedView.GetProject(*params.Name)
 	if err != nil {
 		return err, nilRollback
 	}
 
-	err = pm.updateGITRepositorySecret(*params.Name, &gitCredentials{
-		User:      params.GitUser,
-		Token:     params.GitToken,
-		RemoteURI: params.GitRemoteURL,
-	})
-	if err != nil {
-		return err, nilRollback
+	if params.GitUser != "" && params.GitToken != "" && params.GitRemoteURL != "" {
+		// try to update git repository secret
+		err = pm.updateGITRepositorySecret(*params.Name, &gitCredentials{
+			User:      params.GitUser,
+			Token:     params.GitToken,
+			RemoteURI: params.GitRemoteURL,
+		})
+
+		// no roll back needed since updating the git repository secret was the first operation
+		if err != nil {
+			return err, nilRollback
+		}
 	}
 
+	// new project content in configuration service
 	projectToUpdate := apimodels.Project{
 		GitRemoteURI: params.GitRemoteURL,
 		GitToken:     params.GitToken,
@@ -191,6 +201,7 @@ func (pm *ProjectManager) Update(params *operations.UpdateProjectParams) (error,
 		ProjectName:  *params.Name,
 	}
 
+	// project content in configuration service to rollback
 	projectToRollback := apimodels.Project{
 		CreationDate:    oldProject.CreationDate,
 		GitRemoteURI:    oldProject.GitRemoteURI,
@@ -199,9 +210,12 @@ func (pm *ProjectManager) Update(params *operations.UpdateProjectParams) (error,
 		ShipyardVersion: oldProject.ShipyardVersion,
 	}
 
+	// try to update the project information in configuration service
 	err = pm.ConfigurationStore.UpdateProject(projectToUpdate)
+
 	if err != nil {
 		return err, func() error {
+			// try to rollback already updated git repository secret
 			return pm.updateGITRepositorySecret(*params.Name, &gitCredentials{
 				User:      oldSecret.User,
 				Token:     oldSecret.Token,
@@ -210,14 +224,54 @@ func (pm *ProjectManager) Update(params *operations.UpdateProjectParams) (error,
 		}
 	}
 
-	err = pm.ProjectMaterializedView.UpdateUpstreamInfo(*params.Name, params.GitRemoteURL, params.GitUser)
+	// try to update shipyard project resource
+	if params.Shipyard != "" {
+		shipyardResource := apimodels.Resource{
+			ResourceContent: params.Shipyard,
+			ResourceURI:     common.Stringp("shipyard.yaml"),
+		}
+		err = pm.ConfigurationStore.UpdateProjectResource(*params.Name, &shipyardResource)
+		if err != nil {
+			return err, func() error {
+				// try to rollback already updated git repository secret
+				if err = pm.updateGITRepositorySecret(*params.Name, &gitCredentials{
+					User:      oldSecret.User,
+					Token:     oldSecret.Token,
+					RemoteURI: oldSecret.RemoteURI}); err != nil {
+					return err
+				}
+				// try to rollback already updated project in configuration store
+				return pm.ConfigurationStore.UpdateProject(projectToRollback)
+			}
+		}
+	}
+
+	// copy by value
+	updateProject := *oldProject
+	updateProject.GitUser = params.GitUser
+	updateProject.GitRemoteURI = params.GitRemoteURL
+	if params.Shipyard != "" {
+		updateProject.Shipyard = params.Shipyard
+	}
+
+	// try to update project information in database
+	err = pm.ProjectMaterializedView.UpdateProject(&updateProject)
 	if err != nil {
 		return err, func() error {
 
-			errConfigStoreRollback := pm.ConfigurationStore.UpdateProject(projectToRollback)
-			if errConfigStoreRollback != nil {
-				return errConfigStoreRollback
+			// try to rollback already updated project resource in configuration service
+			if err = pm.ConfigurationStore.UpdateProjectResource(*params.Name, &apimodels.Resource{
+				ResourceContent: oldProject.Shipyard,
+				ResourceURI:     common.Stringp("shipyard.yaml")}); err != nil {
+				return err
 			}
+
+			// try to rollback already updated project information in configuration service
+			if err = pm.ConfigurationStore.UpdateProject(projectToRollback); err != nil {
+				return err
+			}
+
+			// try to rollback already updated git repository secret
 			return pm.updateGITRepositorySecret(*params.Name, &gitCredentials{
 				User:      oldSecret.User,
 				Token:     oldSecret.Token,
@@ -258,12 +312,12 @@ func (pm *ProjectManager) Delete(projectName string) (error, string) {
 
 	resultMessage.WriteString(pm.getDeleteInfoMessage(projectName))
 
-	if err := pm.EventRpository.DeleteEventCollections(projectName); err != nil {
+	if err := pm.EventRepository.DeleteEventCollections(projectName); err != nil {
 		pm.Logger.Error(fmt.Sprintf("could not delete task sequence collection: %s", err.Error()))
 	}
 
 	if err := pm.TaskSequenceRepository.DeleteTaskSequenceCollection(projectName); err != nil {
-		pm.Logger.Error(fmt.Sprintf("could not delete task equence colleciton: %s", err.Error()))
+		pm.Logger.Error(fmt.Sprintf("could not delete task sequence collection: %s", err.Error()))
 	}
 
 	if err := pm.ProjectMaterializedView.DeleteProject(projectName); err != nil {
@@ -382,6 +436,7 @@ func getShipyardNotAvailableError(project string) string {
 
 func toModelProject(project models.ExpandedProject) apimodels.Project {
 	return apimodels.Project{
+
 		CreationDate:    project.CreationDate,
 		GitRemoteURI:    project.GitRemoteURI,
 		GitUser:         project.GitUser,

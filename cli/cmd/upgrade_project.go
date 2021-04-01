@@ -1,13 +1,13 @@
 package cmd
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	apimodels "github.com/keptn/go-utils/pkg/api/models"
 	apiutils "github.com/keptn/go-utils/pkg/api/utils"
 	keptn "github.com/keptn/go-utils/pkg/lib"
 	keptnv2 "github.com/keptn/go-utils/pkg/lib/v0_2_0"
+	"github.com/keptn/keptn/cli/pkg/common"
 	"github.com/keptn/keptn/cli/pkg/credentialmanager"
 	"github.com/keptn/keptn/cli/pkg/logging"
 	"github.com/spf13/cobra"
@@ -49,7 +49,7 @@ For more information about upgrading projects, go to [Manage Keptn](https://kept
 	Example:      `keptn upgrade project PROJECTNAME --shipyard --fromVersion=0.1.0 --toVersion=0.2.0`,
 	SilenceUsage: true,
 	Args: func(cmd *cobra.Command, args []string) error {
-		_, _, err := credentialmanager.NewCredentialManager(false).GetCreds(namespace)
+		_, _, err := credentialmanager.NewCredentialManager(assumeYes).GetCreds(namespace)
 		if err != nil {
 			return errors.New(authErrorMsg)
 		}
@@ -79,18 +79,21 @@ For more information about upgrading projects, go to [Manage Keptn](https://kept
 		var apiToken string
 		var err error
 		if !mocking {
-			endPoint, apiToken, err = credentialmanager.NewCredentialManager(false).GetCreds(namespace)
+			endPoint, apiToken, err = credentialmanager.NewCredentialManager(assumeYes).GetCreds(namespace)
 		} else {
 			endPointPtr, _ := url.Parse(os.Getenv("MOCK_SERVER"))
 			endPoint = *endPointPtr
 			apiToken = ""
 		}
-		if endPointErr := checkEndPointStatus(endPoint.String()); endPointErr != nil {
+		if endPointErr := CheckEndpointStatus(endPoint.String()); endPointErr != nil {
 			return fmt.Errorf("Error connecting to server: %s"+endPointErrorReasons,
 				endPointErr)
 		}
 
 		resourceHandler := apiutils.NewAuthenticatedResourceHandler(endPoint.String(), apiToken, "x-token", nil, endPoint.Scheme)
+		apiHandler := apiutils.NewAuthenticatedAPIHandler(endPoint.String(), apiToken, "x-token", nil, endPoint.Scheme)
+		projectsHandler := apiutils.NewAuthenticatedProjectHandler(endPoint.String(), apiToken, "x-token", nil, endPoint.Scheme)
+
 		shipyardResource, err := resourceHandler.GetProjectResource(projectName, "shipyard.yaml")
 		if err != nil {
 			return fmt.Errorf("Error while retrieving shipyard.yaml for project %s: %s:", projectName, err.Error())
@@ -119,11 +122,11 @@ For more information about upgrading projects, go to [Manage Keptn](https://kept
 			return nil
 		}
 
-		upgradedShipyard := transformShipyard(shipyard)
-		marshalledUpgradedShipyard, err := yaml.Marshal(upgradedShipyard)
+		upgradedShipyard, err := yaml.Marshal(transformShipyard(shipyard))
 		if err != nil {
 			return fmt.Errorf("could not marshal upgraded shipyard into string: %s", err.Error())
 		}
+		upgradedShipyardStr := string(upgradedShipyard)
 
 		logging.PrintLog("Shipyard of project "+projectName+":", logging.InfoLevel)
 		logging.PrintLog("-----------------------", logging.InfoLevel)
@@ -131,7 +134,7 @@ For more information about upgrading projects, go to [Manage Keptn](https://kept
 
 		logging.PrintLog("Shipyard converted into version 0.2:", logging.InfoLevel)
 		logging.PrintLog("-----------------------", logging.InfoLevel)
-		logging.PrintLog(string(marshalledUpgradedShipyard), logging.InfoLevel)
+		logging.PrintLog(upgradedShipyardStr, logging.InfoLevel)
 
 		if upgradeProjectParams.DryRun {
 			return nil
@@ -141,19 +144,25 @@ For more information about upgrading projects, go to [Manage Keptn](https://kept
 			return err
 		}
 
-		shipyardName := "shipyard.yaml"
-		upgradedShipyardResource := &apimodels.Resource{
-			ResourceContent: string(marshalledUpgradedShipyard),
-			ResourceURI:     &shipyardName,
+		existingProject, getPrjErr := projectsHandler.GetProject(apimodels.Project{ProjectName: projectName})
+		if getPrjErr != nil {
+			return errors.New(*getPrjErr.Message)
 		}
-		if _, err := resourceHandler.UpdateProjectResource(projectName, upgradedShipyardResource); err != nil {
-			return fmt.Errorf("could not update shipyard resource: %s", err.Error())
+
+		UpdateProject := apimodels.CreateProject{
+			GitRemoteURL: existingProject.GitRemoteURI,
+			GitToken:     existingProject.GitToken,
+			GitUser:      existingProject.GitUser,
+			Name:         &existingProject.ProjectName,
+			Shipyard:     &upgradedShipyardStr,
 		}
+
+		_, updatePrjErr := apiHandler.UpdateProject(UpdateProject)
+		if updatePrjErr != nil {
+			return errors.New(*updatePrjErr.Message)
+		}
+
 		logging.PrintLog("Shipyard of project "+projectName+" has been upgraded successfully!", logging.InfoLevel)
-		logging.PrintLog("PLEASE NOTE: Due to a known limitation, the displayed version number of your "+
-			"upgraded shipyard file will not be up to date when viewing your project in the bridge, but triggering sequences "+
-			"for this project is already supported. Once you have triggered the first sequence for this project, "+
-			"the shipyard version number will be displayed correctly.", logging.InfoLevel)
 
 		return nil
 	},
@@ -176,16 +185,9 @@ func confirmShipyardUpgrade() error {
 	if upgradeProjectParams.AutoConfirm {
 		return nil
 	}
-	logging.PrintLog("Do you want to continue with this? (y/n)", logging.InfoLevel)
-	reader := bufio.NewReader(os.Stdin)
-	in, err := reader.ReadString('\n')
-	if err != nil {
-		return err
-	}
-	in = strings.ToLower(strings.TrimSpace(in))
-	if !(in == "y" || in == "yes") {
-		err := errors.New("stopping installation")
-		log.Fatal(err)
+	userConfirmation := common.NewUserInput().AskBool("Do you want to continue with this?", &common.UserInputOptions{AssumeYes: assumeYes})
+	if !userConfirmation {
+		log.Fatal("stopping installation")
 	}
 	return nil
 }

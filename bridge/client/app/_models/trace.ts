@@ -204,7 +204,7 @@ class Trace {
   }
 
   public isEvaluation(): string {
-    return this.type === EventTypes.EVALUATION_TRIGGERED ? this.data.stage : null;
+    return this.type.endsWith(EventTypes.EVALUATION_TRIGGERED_SUFFIX) ? this.data.stage : null;
   }
 
   public isEvaluationInvalidation(): boolean {
@@ -319,6 +319,10 @@ class Trace {
 
   getFinishedEvent() {
     return this.type.includes(".finished") ? this : this.traces.find(t => t.type.includes(".finished"));
+  }
+
+  getDeploymentUrl() {
+    return this.data.deployment.deploymentURIsPublic[0];
   }
 
   static fromJSON(data: any) {

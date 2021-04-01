@@ -14,6 +14,7 @@ import {ApiService} from "./api.service";
 import {DateUtil} from "../_utils/date.utils";
 
 import * as moment from 'moment';
+import {KeptnService} from '../_models/keptn-service';
 
 @Injectable({
   providedIn: 'root'
@@ -21,6 +22,7 @@ import * as moment from 'moment';
 export class DataService {
 
   private _projects = new BehaviorSubject<Project[]>(null);
+  private _taskNames = new BehaviorSubject<string[]>([]);
   private _roots = new BehaviorSubject<Root[]>(null);
   private _openApprovals = new BehaviorSubject<Trace[]>([]);
   private _keptnInfo = new BehaviorSubject<any>(null);
@@ -41,6 +43,16 @@ export class DataService {
 
   get projects(): Observable<Project[]> {
     return this._projects.asObservable();
+  }
+
+  get taskNames(): Observable<string[]> {
+    return  this._taskNames.asObservable();
+  }
+
+  get taskNamesTriggered(): Observable<string[]> {
+    return this._taskNames.pipe(
+      map(tasks => tasks.map(task => task + '.triggered'))
+    );
   }
 
   get roots(): Observable<Root[]> {
@@ -64,6 +76,13 @@ export class DataService {
       map(projects => projects ? projects.find(project => {
         return project.projectName === projectName;
       }) : null)
+    );
+  }
+
+  public getKeptnServices(projectName: string): Observable<KeptnService[]> {
+    return this.apiService.getKeptnServices(projectName).pipe(
+      map(services => services.map(service => KeptnService.fromJSON(service))),
+      map(services => services.sort((serviceA, serviceB) => serviceA.name.localeCompare(serviceB.name)))
     );
   }
 
@@ -109,7 +128,10 @@ export class DataService {
         map(projects =>
           projects.map(project => {
             project.stages = project.stages.map(stage => {
-              stage.services = stage.services.map(service => Service.fromJSON(service));
+              stage.services = stage.services.map(service => {
+                service.stage = stage.stageName;
+                return Service.fromJSON(service);
+              });
               return Stage.fromJSON(stage);
             });
             return Project.fromJSON(project);
@@ -177,13 +199,13 @@ export class DataService {
       map(roots => roots.reduce((result, roots) => result.concat(roots), []))
     ).subscribe((roots: Root[]) => {
       project.sequences = [...roots||[], ...project.sequences||[]].sort(DateUtil.compareTraceTimesAsc);
-      project.getServices().forEach(service => {
-        service.roots = project.sequences.filter(s => s.getService() == service.serviceName);
+      project.stages.forEach(stage => {
+        stage.services.forEach(service => {
+          service.roots = project.sequences.filter(s => s.getService() == service.serviceName && s.getStages().includes(stage.stageName));
+          service.openApprovals = service.roots.reduce((openApprovals, root) => [...openApprovals, ...root.getPendingApprovals(stage.stageName)], []);
+        });
       });
       this._roots.next(project.sequences);
-      roots.forEach(root => {
-        this.updateApprovals(root);
-      });
     });
   }
 
@@ -203,8 +225,15 @@ export class DataService {
       )
       .subscribe((traces: Trace[]) => {
         root.traces = this.traceMapper([...traces||[], ...root.traces||[]]);
+        this.getProject(root.getProject()).pipe(take(1))
+          .subscribe(project => {
+            project.stages.filter(s => root.getStages().includes(s.stageName)).forEach(stage => {
+              stage.services.filter(s => root.getService() == s.serviceName).forEach(service => {
+                service.openApprovals = service.roots.reduce((openApprovals, root) => [...openApprovals, ...root.getPendingApprovals(stage.stageName)], []);
+              });
+            });
+          });
         this._roots.next([...this._roots.getValue()]);
-        this.updateApprovals(root);
       });
   }
 
@@ -216,13 +245,7 @@ export class DataService {
     this.apiService.getEvaluationResults(event.data.project, event.data.service, event.data.stage, event.source, fromTime ? fromTime.toISOString() : null)
       .pipe(
         map(result => result.events||[]),
-        map(traces => traces.map(trace => Trace.fromJSON(trace))),
-        map( traces => traces.map((trace: Trace) => {
-          if(trace.data.evaluation.indicatorResults){
-            trace.data.evaluation.indicatorResults.sort( (resultA, resultB) => resultA.value.metric.localeCompare(resultB.value.metric))
-          }
-          return trace;
-        }))
+        map(traces => traces.map(trace => Trace.fromJSON(trace)))
       )
       .subscribe((traces: Trace[]) => {
         this._evaluationResults.next({
@@ -244,19 +267,6 @@ export class DataService {
       });
   }
 
-  private updateApprovals(root: Root) {
-    if(root.traces.length > 0) {
-      this._openApprovals.next(this._openApprovals.getValue().filter(approval => root.traces.indexOf(approval) < 0));
-      const approvals = root.getPendingApprovals();
-      if (approvals.length !== 0)
-        this._openApprovals.next([...this._openApprovals.getValue(), ...approvals].sort(DateUtil.compareTraceTimesAsc));
-    }
-  }
-
-  public getOpenApprovals(project: Project, stage: Stage, service?: Service): Trace[]{
-    return this._openApprovals.getValue().filter(approval => approval.data.project === project.projectName && approval.data.stage === stage.stageName && (!service || approval.data.service === service.serviceName));
-  }
-
   public invalidateEvaluation(evaluation: Trace, reason: string) {
     this.apiService.sendEvaluationInvalidated(evaluation, reason)
       .pipe(take(1))
@@ -268,26 +278,39 @@ export class DataService {
       });
   }
 
+  public loadTaskNames(projectName: string) {
+    this.apiService.getTaskNames(projectName)
+      .pipe(
+        map(taskNames => taskNames.sort((taskA, taskB) => taskA.localeCompare(taskB)))
+      )
+      .subscribe(taskNames => {
+      this._taskNames.next(taskNames);
+    });
+  }
+
   private traceMapper(traces: Trace[]) {
-    return traces
+    traces = traces
       .map(trace => Trace.fromJSON(trace))
-      .sort(DateUtil.compareTraceTimesDesc)
-      .reduce((result: Trace[], trace: Trace) => {
-        let trigger = result.find(t => {
-          if(trace.triggeredid)
-            return t.id == trace.triggeredid;
-          else if(trace.isProblem() && trace.isProblemResolvedOrClosed())
+      .sort(DateUtil.compareTraceTimesDesc);
+
+    return traces.reduce((result: Trace[], trace: Trace) => {
+      const trigger = traces.find(t => {
+          if (trace.triggeredid) {
+            return t.id === trace.triggeredid;
+          } else if (trace.isProblem() && trace.isProblemResolvedOrClosed()) {
             return t.isProblem() && !t.isProblemResolvedOrClosed();
-          else if(trace.isFinished())
-            return t.type.slice(0,-8) == trace.type.slice(0,-9);
-        });
+          } else if (!t.triggeredid && trace.isFinished()) {
+            return t.type.slice(0, -8) === trace.type.slice(0, -9);
+          }
+      });
 
-        if(trigger)
-          trigger.traces.push(trace);
-        else
-          result.push(trace);
+      if (trigger) {
+        trigger.traces.push(trace);
+      } else {
+        result.push(trace);
+      }
 
-        return result;
-      }, []);
+      return result;
+    }, []);
   }
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	cloudevents "github.com/cloudevents/sdk-go/v2"
-	"github.com/ghodss/yaml"
 	"github.com/google/uuid"
 	apimodels "github.com/keptn/go-utils/pkg/api/models"
 	apiutils "github.com/keptn/go-utils/pkg/api/utils"
@@ -14,6 +13,7 @@ import (
 	"github.com/keptn/keptn/cli/pkg/docker"
 	"github.com/keptn/keptn/cli/pkg/logging"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v2"
 	"net/url"
 	"os"
 	"strings"
@@ -40,7 +40,7 @@ var triggerDeliveryCmd = &cobra.Command{
 	Aliases: []string{"delivery"},
 	Short:   "Triggers the delivery of a new artifact for a service in a project",
 	Long: `Triggers the delivery of a new artifact for a service in a project.
-An "artifact" is the name of a Docker image which can be located at any Docker registry (e.g., Dockerhob or Quay).
+An "artifact" is the name of a Docker image which can be located at any Docker registry (e.g., DockerHub or Quay).
 The new artifact is pushed in the first stage specified in the Shipyard of the project. Afterwards, Keptn takes care
 of deploying the artifact to the other stages as well.
 
@@ -66,7 +66,7 @@ func doTriggerDelivery(deliveryInputData deliveryStruct) error {
 	var apiToken string
 	var err error
 	if !mocking {
-		endPoint, apiToken, err = credentialmanager.NewCredentialManager(false).GetCreds(namespace)
+		endPoint, apiToken, err = credentialmanager.NewCredentialManager(assumeYes).GetCreds(namespace)
 	} else {
 		endPointPtr, _ := url.Parse(os.Getenv("MOCK_SERVER"))
 		endPoint = *endPointPtr
@@ -81,7 +81,7 @@ func doTriggerDelivery(deliveryInputData deliveryStruct) error {
 	logging.PrintLog("Starting to deliver the service "+
 		*deliveryInputData.Service+" in project "+*deliveryInputData.Project+" in version "+*deliveryInputData.Image+":"+*deliveryInputData.Tag, logging.InfoLevel)
 
-	if endPointErr := checkEndPointStatus(endPoint.String()); endPointErr != nil {
+	if endPointErr := CheckEndpointStatus(endPoint.String()); endPointErr != nil {
 		return fmt.Errorf("Error connecting to server: %s"+endPointErrorReasons,
 			endPointErr)
 	}
@@ -158,7 +158,7 @@ func doTriggerDelivery(deliveryInputData deliveryStruct) error {
 			Project:      *deliveryInputData.Project,
 		}
 		watcher := NewDefaultWatcher(eventHandler, filter, time.Duration(*deliveryInputData.WatchTime)*time.Second)
-		PrintEventWatcher(watcher, *deliveryInputData.Output, os.Stdout)
+		PrintEventWatcher(rootCmd.Context(), watcher, *deliveryInputData.Output, os.Stdout)
 	}
 	return nil
 }
