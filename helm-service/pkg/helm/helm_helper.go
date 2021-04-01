@@ -1,9 +1,10 @@
 package helm
 
 import (
-	keptnv2 "github.com/keptn/go-utils/pkg/lib/v0_2_0"
 	"io"
 	"strings"
+
+	keptnv2 "github.com/keptn/go-utils/pkg/lib/v0_2_0"
 
 	utils "github.com/keptn/go-utils/pkg/api/utils"
 	keptnutils "github.com/keptn/kubernetes-utils/pkg"
@@ -69,13 +70,16 @@ func GetChartName(service string, generated bool) string {
 // GetReleaseName returns the name of the Helm release
 func GetReleaseName(project string, stage string, service string, generated bool) string {
 	suffix := ""
+	release := ""
 	if generated {
 		suffix = "-generated"
-	}
-	fullRelease := strings.Split(project + "-" + stage + "-" + service + suffix, "-")
-	var release string
-	for _, i := range fullRelease {
-		release += string(i[0])
+		fullRelease := strings.Split(project+"-"+stage+"-"+service+suffix, "-")
+		var release string
+		for _, i := range fullRelease {
+			release += string(i[0])
+		}
+	} else {
+		release = service
 	}
 	return release
 }
